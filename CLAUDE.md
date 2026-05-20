@@ -312,6 +312,25 @@ at `~/.claude/plans/system-instruction-you-are-working-rippling-knuth.md`.
 Convention skill at `skills/conventions/calibration.md` has the agent-
 facing rules.
 
+**v0.37.2.0 hotfix (2026-05-20, migration v80)** — `takes_resolution_consistency`
+CHECK widened to accept `quality='unresolvable' AND outcome=NULL` as the 4th
+valid resolution state. Column-level CHECK on `resolved_quality` renamed to
+`takes_resolved_quality_values` and widened to enumerate all 4 states. Unblocks
+production grading scripts that write the judge's 4th verdict type. `Take.resolved_quality`,
+`TakeResolution.quality`, and `takes-fence.ts:TakeQuality` all widen to 4-state.
+`TakesScorecard` gains sibling fields `unresolvable_count` + `unresolvable_rate`;
+`resolved` stays 3-state (correct+incorrect+partial) so historical comparisons
+hold. `finalizeScorecard` formula: `unresolvable_rate = unresolvable_count / (resolved
++ unresolvable_count)`, NULL when both 0. Spec doc preserved at
+`docs/architecture/calibration-quality-gate-spec.md` (from closed PR #1191) since
+the follow-up minor (forthcoming) ships the falsifiability + per-category
+calibration on top. Migration renumbered v74→v79→v80 during successive master
+merges — v0.37.0.0's autonomous-remediation wave claimed v68-v78, then v0.37.1.0
+(brainstorm/lsd) claimed v79. Pinned by
+R1-R5 in `test/takes-resolution.test.ts` and `test/migrate.test.ts`'s
+v80 structural + PGLite round-trip suite (CHECK admits unresolvable+NULL, still
+rejects partial+true and unresolvable+true|false, pre-v80 NULL/NULL rows survive).
+
 - `src/core/cycle/base-phase.ts` — abstract `BaseCyclePhase` class.
   Enforces `sourceScopeOpts(ctx)` threading at the type level; closes
   the v0.34.1 source-isolation leak class structurally for every new
