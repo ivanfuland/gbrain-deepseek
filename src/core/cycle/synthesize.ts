@@ -851,29 +851,47 @@ NOT WORTH PROCESSING (return worth_processing=false):
 Respond as JSON: {"worth_processing": <bool>, "reasons": ["<short>", "<short>"]}.
 Two reasons max, one phrase each.`;
 
-  const msg = await client.create({
-    model: verdictModel,
-    max_tokens: 200,
-    system: sys,
-    messages: [{ role: 'user', content: `Transcript ${t.basename}:\n\n${trimmed}` }],
-  });
+  // Reasoning models (e.g. DeepSeek v4, o-series) spend output tokens on a
+  // hidden reasoning pass before the answer. A 200-token cap — fine for the
+  // original Haiku verdict — gets fully consumed by reasoning on longer
+  // transcripts, so the response finishes with reason 'length' and an EMPTY
+  // text body → judgeSignificance can't find the JSON → "judge response
+  // unparseable" → the transcript is silently skipped. 2048 leaves room for
+  // the reasoning pass plus the tiny verdict JSON; non-reasoning models still
+  // stop after ~50 tokens, so this adds no cost there.
+  // Retry on unparseable. Two failure modes seen with reasoning verdict models
+  // (e.g. DeepSeek v4): (1) budget — the reasoning pass alone is bounded by the
+  // 2048 cap above; (2) format drift — the model occasionally answers in prose
+  // instead of the requested JSON (sampling variance, finish 'stop'). Since
+  // verdicts are cached, a single fluke would permanently skip the transcript;
+  // re-rolling almost always yields valid JSON. Returns on the first parseable
+  // response, so the common path is still a single call.
+  const VERDICT_ATTEMPTS = 3;
+  for (let attempt = 0; attempt < VERDICT_ATTEMPTS; attempt++) {
+    const msg = await client.create({
+      model: verdictModel,
+      max_tokens: 2048,
+      system: sys,
+      messages: [{ role: 'user', content: `Transcript ${t.basename}:\n\n${trimmed}` }],
+    });
 
-  for (const block of msg.content) {
-    if (block.type === 'text') {
-      const text = block.text.trim();
-      const m = /\{[\s\S]*\}/.exec(text);
-      if (!m) continue;
-      try {
-        const parsed = JSON.parse(m[0]) as { worth_processing?: unknown; reasons?: unknown };
-        const worth = parsed.worth_processing === true;
-        const reasons = Array.isArray(parsed.reasons)
-          ? parsed.reasons.filter((r): r is string => typeof r === 'string').slice(0, 4)
-          : [];
-        return { worth_processing: worth, reasons };
-      } catch { /* fall through */ }
+    for (const block of msg.content) {
+      if (block.type === 'text') {
+        const text = block.text.trim();
+        const m = /\{[\s\S]*\}/.exec(text);
+        if (!m) continue;
+        try {
+          const parsed = JSON.parse(m[0]) as { worth_processing?: unknown; reasons?: unknown };
+          const worth = parsed.worth_processing === true;
+          const reasons = Array.isArray(parsed.reasons)
+            ? parsed.reasons.filter((r): r is string => typeof r === 'string').slice(0, 4)
+            : [];
+          return { worth_processing: worth, reasons };
+        } catch { /* fall through to retry */ }
+      }
     }
   }
-  // Couldn't parse — default to NOT processing (cheap fallback).
+  // All attempts unparseable — default to NOT processing (cheap fallback).
   return { worth_processing: false, reasons: ['judge response unparseable'] };
 }
 
