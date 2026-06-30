@@ -359,7 +359,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
 
       // Budget pre-check before the LLM call. Estimate: ~1500 input tokens + 500 output.
       const budget = this.checkBudget({
-        modelId: opts.model ?? 'claude-sonnet-4-6',
+        modelId: opts.model ?? 'litellm:claude-sonnet-4-6',
         estimatedInputTokens: 1500,
         maxOutputTokens: 500,
       });
@@ -378,7 +378,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
           pagePath: page.slug,
           pageBody: body,
           existingTakes,
-          modelHint: opts.model,
+          modelHint: opts.model ?? 'litellm:claude-sonnet-4-6',
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -408,7 +408,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
             p.weight,
             p.domain ?? null,
             JSON.stringify(existingTakes),
-            opts.model ?? 'claude-sonnet-4-6',
+            opts.model ?? 'litellm:claude-sonnet-4-6',
           ],
         );
         result.proposals_inserted += 1;
