@@ -228,7 +228,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
     const holder = opts.holder ?? 'garry';
     const promptVersion = opts.promptVersion ?? CALIBRATION_PROFILE_PROMPT_VERSION;
-    const modelId = opts.model ?? 'claude-sonnet-4-6';
+    const modelId = opts.model ?? 'litellm:claude-sonnet-4-6';
     const gradeCompletion = opts.gradeCompletion ?? 1.0;
     const patternsGenerator = opts.patternsGenerator ?? defaultPatternsGenerator;
     const biasTagsGenerator = opts.biasTagsGenerator ?? defaultBiasTagsGenerator;
@@ -264,6 +264,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
         scorecard,
         holder,
         attempt,
+        modelHint: modelId,
         ...(feedback !== undefined ? { feedback } : {}),
       });
       return lines.join('\n');

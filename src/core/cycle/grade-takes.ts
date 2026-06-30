@@ -395,7 +395,13 @@ class GradeTakesPhase extends BaseCyclePhase {
     const autoResolve = opts.autoResolve ?? false; // D17 default OFF
     const autoResolveThreshold = opts.autoResolveThreshold ?? 0.95; // D12 conservative
     const resolvedByLabel = opts.resolvedByLabel ?? 'gbrain:grade_takes';
-    const judgeModelId = opts.model ?? 'claude-sonnet-4-6';
+    // The Hindsight calibration subsystem (propose -> grade -> calibration) has
+    // its scores/thresholds (grade confidence >= 0.95 D12, calibration brier
+    // math) tuned to Sonnet's scoring distribution — swapping the model without
+    // retuning the thresholds fails silently. The grade judge should also stay
+    // independent of whichever model produced the takes (synthesize), to avoid
+    // self-evaluation bias. So the trio keeps a strong, fixed Sonnet judge.
+    const judgeModelId = opts.model ?? 'litellm:claude-sonnet-4-6';
 
     const useEnsemble = opts.useEnsemble ?? false;
     const ensembleThreshold = opts.ensembleThreshold ?? 0.85;
@@ -468,7 +474,7 @@ class GradeTakesPhase extends BaseCyclePhase {
       // Call the single-model judge. Errors on a single take log warning + continue.
       let verdict: JudgeVerdict;
       try {
-        verdict = await judge({ take, evidence, modelHint: opts.model });
+        verdict = await judge({ take, evidence, modelHint: judgeModelId });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         result.warnings.push(`judge failed on take ${take.id}: ${msg}`);

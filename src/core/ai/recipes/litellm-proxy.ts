@@ -40,6 +40,18 @@ export const litellmProxy: Recipe = {
       // mismatched-dim responses pre-storage).
       supports_multimodal: true,
     },
+    // LiteLLM proxies chat too, but the upstream recipe only declared the
+    // embedding touchpoint — so `litellm:<chat-model>` hit
+    // assertTouchpoint("does not support chat") and threw. Empty `models`
+    // skips the allow-list (the proxy decides). supports_tools MUST stay true:
+    // enforceSubagentCapable downgrades the subagent tier to Anthropic otherwise.
+    chat: {
+      models: [],
+      supports_tools: true,
+      supports_subagent_loop: true,
+      supports_prompt_cache: false,
+      max_context_tokens: 128000,
+    },
   },
   setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL + pass --embedding-model litellm:<model> and --embedding-dimensions <N>.',
 };
