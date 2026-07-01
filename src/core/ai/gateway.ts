@@ -2336,6 +2336,20 @@ export interface ChatToolDef {
  * production subagent jobs) throws "messages do not match the ModelMessage[]
  * schema" the moment the model calls a tool. Surfaced by the SkillOpt eval.
  */
+// 补丁4 (2026-07-01, job 54 实跑抓到): tool-result 的 output 可能来自 live 工具
+// (如 brain_get_page 返回的 page 对象),含非-JSON 值(undefined 字段 / Date / bigint)。
+// AI SDK v6 的 ModelMessage JSONValue schema 拒它们(invalid_union at ['output','value'])
+// → 整个 tool turn 死信。净化成合法 JSONValue(undefined 剥、Date→ISO、bigint→字符串、
+// 不可序列化兜底 String)。持久化路径过 PG JSONB 已隐式净化,只 live 路径需要这个。
+function toJsonSafeValue(x: unknown): unknown {
+  if (x == null) return null;
+  try {
+    return JSON.parse(JSON.stringify(x, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)));
+  } catch {
+    return String(x);
+  }
+}
+
 export function toModelMessages(messages: ChatMessage[]): unknown[] {
   return messages.map((m) => {
     if (typeof m.content === 'string') return { role: m.role, content: m.content };
@@ -2351,10 +2365,10 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
             toolCallId: b.toolCallId,
             toolName: b.toolName,
             output: b.isError
-              ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : JSON.stringify(b.output) }
+              ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : JSON.stringify(toJsonSafeValue(b.output)) }
               : (typeof b.output === 'string'
                 ? { type: 'text' as const, value: b.output }
-                : { type: 'json' as const, value: (b.output ?? null) as never }),
+                : { type: 'json' as const, value: toJsonSafeValue(b.output) as never }),
           })),
       };
     }

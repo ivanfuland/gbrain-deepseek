@@ -11,6 +11,8 @@
  * v6 shapes that `generateText` accepts (verified against AI SDK 6.0.174).
  */
 import { describe, test, expect } from 'bun:test';
+import { z } from 'zod';
+import { modelMessageSchema } from 'ai';
 import { toModelMessages, type ChatMessage } from '../src/core/ai/gateway.ts';
 
 describe('toModelMessages — v6 ModelMessage shape', () => {
@@ -159,5 +161,29 @@ describe('toModelMessages — v6 ModelMessage shape', () => {
     expect((out[1] as any).role).toBe('assistant');
     expect((out[2] as any).role).toBe('tool');
     expect((out[2] as any).content[0].output).toEqual({ type: 'json', value: { hits: 0 } });
+  });
+
+  // 补丁4 (2026-07-01, job 54 实跑抓到): live tool 输出(如 brain_get_page 返回的
+  // page 对象)可含非-JSON 值(undefined 字段 / Date / bigint)。toModelMessages 若
+  // 原样塞进 {type:'json', value}，AI SDK v6 的 JSONValue schema 拒(invalid_union
+  // at ['output','value'])→ 整个 synthesize turn 死。持久化版过了 PG JSONB 往返被
+  // 净化，故只有 live 路径炸(9/37 job 死信)。修:tool-result output value 做 JSON 净化。
+  test('补丁4: tool-result output 含非-JSON 值(undefined/Date/bigint)应转成合法 ModelMessage[]', () => {
+    const msgs: ChatMessage[] = [
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'brain_get_page', input: {} }] },
+      {
+        role: 'user',
+        content: [{
+          type: 'tool-result', toolCallId: 'c1', toolName: 'brain_get_page',
+          output: {
+            id: 43, opt: undefined, when: new Date('2026-06-29T00:00:00Z'),
+            big: BigInt('9007199254740993'), nested: { x: undefined, arr: [1, undefined, 3] },
+          },
+        }],
+      },
+    ];
+    const out = toModelMessages(msgs as any);
+    const r = z.array(modelMessageSchema).safeParse(out);
+    expect(r.success).toBe(true); // 修前 false(invalid_union at output.value)
   });
 });
