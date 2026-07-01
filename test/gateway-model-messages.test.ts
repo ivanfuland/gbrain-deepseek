@@ -182,8 +182,16 @@ describe('toModelMessages — v6 ModelMessage shape', () => {
         }],
       },
     ];
-    const out = toModelMessages(msgs as any);
-    const r = z.array(modelMessageSchema).safeParse(out);
-    expect(r.success).toBe(true); // 修前 false(invalid_union at output.value)
+    const out = toModelMessages(msgs as any) as any[];
+    // 1) 整批过 v6 ModelMessage schema(修前 false: invalid_union at output.value)
+    expect(z.array(modelMessageSchema).safeParse(out).success).toBe(true);
+    // 2) 具体净化语义(codex P2): Date→ISO / bigint→字符串 / undefined 剥 / 数组 undefined→null
+    const val = out[1].content[0].output.value;
+    expect(val.when).toBe('2026-06-29T00:00:00.000Z'); // Date → ISO 字符串
+    expect(val.big).toBe('9007199254740993');          // bigint → 字符串
+    expect('opt' in val).toBe(false);                  // 顶层 undefined 字段被剥
+    expect('x' in val.nested).toBe(false);             // 嵌套 undefined 被剥
+    expect(val.nested.arr).toEqual([1, null, 3]);      // 数组里 undefined → null
+    expect(val.id).toBe(43);                           // 正常值保留
   });
 });

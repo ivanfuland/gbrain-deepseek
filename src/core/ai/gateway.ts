@@ -3136,7 +3136,11 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
       // Step 3: execute (side effect).
       opts.onHeartbeat?.('tool_called', { turn_idx: turnIdx, tool_name: call.toolName });
       try {
-        const output = await handler.execute(call.input, opts.abortSignal ?? new AbortController().signal);
+        // 补丁4 (2026-07-01): 净化 live 工具输出为合法 JSONValue(Date→ISO / undefined 剥 /
+        // bigint→字符串)在源头,让持久化(JSON.stringify→JSONB)、内存消息、toModelMessages
+        // 三处拿到一致的干净值。根治"持久化版过 JSONB 隐式净化、内存版留 Date 对象 → 只有
+        // live 路径撞 v6 ModelMessage schema"的不一致;并兜住 bigint 让持久化 stringify 不抛。
+        const output = toJsonSafeValue(await handler.execute(call.input, opts.abortSignal ?? new AbortController().signal));
         // Step 4: settle complete.
         await opts.onToolCallComplete?.(gbrainToolUseId, output);
         toolResultBlocks.push({
