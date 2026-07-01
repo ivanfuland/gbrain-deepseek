@@ -49,7 +49,7 @@ import {
 } from './subagent-audit.ts';
 import { resolveModel, isAnthropicProvider, TIER_DEFAULTS } from '../../model-config.ts';
 import { buildSystemPrompt, DEFAULT_SUBAGENT_SYSTEM } from '../system-prompt.ts';
-import { toolLoop as gatewayToolLoop } from '../../ai/gateway.ts';
+import { toolLoop as gatewayToolLoop, jsonSafeStringify } from '../../ai/gateway.ts';
 import type { ChatToolDef, ChatMessage, ChatBlock, ChatResult, ToolHandler } from '../../ai/gateway.ts';
 import { classifyCapabilities } from '../../ai/capabilities.ts';
 import { randomUUIDv7 } from 'bun';
@@ -1276,7 +1276,9 @@ async function persistToolExecComplete(
     `UPDATE subagent_tool_executions
         SET status = 'complete', output = $3::text::jsonb, ended_at = now()
       WHERE job_id = $1 AND tool_use_id = $2`,
-    [jobId, toolUseId, typeof output === 'string' ? output : JSON.stringify(output)],
+    // 补丁4: bigint/循环安全序列化——默认 JSON.stringify 遇 bigint 抛→工具误判 failed。
+    // 覆盖全部 3 个 execute 源点(393/648/878)的持久化 choke。
+    [jobId, toolUseId, typeof output === 'string' ? output : jsonSafeStringify(output)],
   );
 }
 

@@ -2336,6 +2336,44 @@ export interface ChatToolDef {
  * production subagent jobs) throws "messages do not match the ModelMessage[]
  * schema" the moment the model calls a tool. Surfaced by the SkillOpt eval.
  */
+// 补丁4 (2026-07-01, job 54 实跑抓到): tool-result 的 output 可能来自 live 工具
+// (如 brain_get_page 返回的 page 对象),含非-JSON 值(undefined 字段 / Date / bigint)。
+// AI SDK v6 的 ModelMessage JSONValue schema 拒它们(invalid_union at ['output','value'])
+// → 整个 tool turn 死信。净化成合法 JSONValue(undefined 剥、Date→ISO、bigint→字符串、
+// 不可序列化兜底)。补丁4 在两个序列化边界净化:持久化 choke(persistToolExecComplete)+ 本转换。
+// bigint / 循环引用 安全的 replacer:默认 JSON.stringify 遇 bigint 或循环会抛。
+function jsonSafeReplacer(): (k: string, v: unknown) => unknown {
+  const seen = new WeakSet<object>();
+  return (_k, v) => {
+    if (typeof v === 'bigint') return v.toString();
+    if (typeof v === 'object' && v !== null) {
+      if (seen.has(v as object)) return '[Circular]';
+      seen.add(v as object);
+    }
+    return v;
+  };
+}
+
+// bigint/循环安全的 stringify,永不抛(用于持久化 choke persistToolExecComplete)。
+export function jsonSafeStringify(x: unknown): string {
+  try {
+    return JSON.stringify(x, jsonSafeReplacer()) ?? 'null';
+  } catch {
+    try { return JSON.stringify(String(x)); } catch { return 'null'; }
+  }
+}
+
+// 把任意值净化成合法 JSONValue(Date→ISO / undefined 剥 / bigint→字符串 / 循环→"[Circular]"),
+// 永不抛。用于 toModelMessages 的 tool-result output(v6 JSONValue schema 严格拒非-JSON)。
+export function toJsonSafeValue(x: unknown): unknown {
+  if (x == null) return null;
+  try {
+    return JSON.parse(jsonSafeStringify(x));
+  } catch {
+    return null;
+  }
+}
+
 export function toModelMessages(messages: ChatMessage[]): unknown[] {
   return messages.map((m) => {
     if (typeof m.content === 'string') return { role: m.role, content: m.content };
@@ -2351,10 +2389,10 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
             toolCallId: b.toolCallId,
             toolName: b.toolName,
             output: b.isError
-              ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : JSON.stringify(b.output) }
+              ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : jsonSafeStringify(b.output) }
               : (typeof b.output === 'string'
                 ? { type: 'text' as const, value: b.output }
-                : { type: 'json' as const, value: (b.output ?? null) as never }),
+                : { type: 'json' as const, value: toJsonSafeValue(b.output) as never }),
           })),
       };
     }
@@ -3122,7 +3160,11 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
       // Step 3: execute (side effect).
       opts.onHeartbeat?.('tool_called', { turn_idx: turnIdx, tool_name: call.toolName });
       try {
-        const output = await handler.execute(call.input, opts.abortSignal ?? new AbortController().signal);
+        // 补丁4 (2026-07-01): 净化 live 工具输出为合法 JSONValue(Date→ISO / undefined 剥 /
+        // bigint→字符串)在源头,让持久化(JSON.stringify→JSONB)、内存消息、toModelMessages
+        // 三处拿到一致的干净值。根治"持久化版过 JSONB 隐式净化、内存版留 Date 对象 → 只有
+        // live 路径撞 v6 ModelMessage schema"的不一致;并兜住 bigint 让持久化 stringify 不抛。
+        const output = toJsonSafeValue(await handler.execute(call.input, opts.abortSignal ?? new AbortController().signal));
         // Step 4: settle complete.
         await opts.onToolCallComplete?.(gbrainToolUseId, output);
         toolResultBlocks.push({
