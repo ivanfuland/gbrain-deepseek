@@ -11,7 +11,9 @@
  * v6 shapes that `generateText` accepts (verified against AI SDK 6.0.174).
  */
 import { describe, test, expect } from 'bun:test';
-import { toModelMessages, type ChatMessage } from '../src/core/ai/gateway.ts';
+import { z } from 'zod';
+import { modelMessageSchema } from 'ai';
+import { toModelMessages, toJsonSafeValue, jsonSafeStringify, type ChatMessage } from '../src/core/ai/gateway.ts';
 
 describe('toModelMessages — v6 ModelMessage shape', () => {
   test('string content passes through unchanged', () => {
@@ -159,5 +161,61 @@ describe('toModelMessages — v6 ModelMessage shape', () => {
     expect((out[1] as any).role).toBe('assistant');
     expect((out[2] as any).role).toBe('tool');
     expect((out[2] as any).content[0].output).toEqual({ type: 'json', value: { hits: 0 } });
+  });
+
+  // 补丁4 (2026-07-01, job 54 实跑抓到): live tool 输出(如 brain_get_page 返回的
+  // page 对象)可含非-JSON 值(undefined 字段 / Date / bigint)。toModelMessages 若
+  // 原样塞进 {type:'json', value}，AI SDK v6 的 JSONValue schema 拒(invalid_union
+  // at ['output','value'])→ 整个 synthesize turn 死。持久化版过了 PG JSONB 往返被
+  // 净化，故只有 live 路径炸(9/37 job 死信)。修:tool-result output value 做 JSON 净化。
+  test('补丁4: tool-result output 含非-JSON 值(undefined/Date/bigint)应转成合法 ModelMessage[]', () => {
+    const msgs: ChatMessage[] = [
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'brain_get_page', input: {} }] },
+      {
+        role: 'user',
+        content: [{
+          type: 'tool-result', toolCallId: 'c1', toolName: 'brain_get_page',
+          output: {
+            id: 43, opt: undefined, when: new Date('2026-06-29T00:00:00Z'),
+            big: BigInt('9007199254740993'), nested: { x: undefined, arr: [1, undefined, 3] },
+          },
+        }],
+      },
+    ];
+    const out = toModelMessages(msgs as any) as any[];
+    // 1) 整批过 v6 ModelMessage schema(修前 false: invalid_union at output.value)
+    expect(z.array(modelMessageSchema).safeParse(out).success).toBe(true);
+    // 2) 具体净化语义(codex P2): Date→ISO / bigint→字符串 / undefined 剥 / 数组 undefined→null
+    const val = out[1].content[0].output.value;
+    expect(val.when).toBe('2026-06-29T00:00:00.000Z'); // Date → ISO 字符串
+    expect(val.big).toBe('9007199254740993');          // bigint → 字符串
+    expect('opt' in val).toBe(false);                  // 顶层 undefined 字段被剥
+    expect('x' in val.nested).toBe(false);             // 嵌套 undefined 被剥
+    expect(val.nested.arr).toEqual([1, null, 3]);      // 数组里 undefined → null
+    expect(val.id).toBe(43);                           // 正常值保留
+  });
+});
+
+// 补丁4: 净化 helper 单测(持久化 choke persistToolExecComplete + toModelMessages 共用)。
+describe('补丁4: jsonSafe helpers', () => {
+  const circular: any = { a: 1 };
+  circular.self = circular;
+
+  test('jsonSafeStringify 永不抛(bigint/循环/Date/undefined)', () => {
+    expect(() => jsonSafeStringify({ b: BigInt('9007199254740993') })).not.toThrow();
+    expect(() => jsonSafeStringify(circular)).not.toThrow();
+    expect(JSON.parse(jsonSafeStringify({ b: BigInt(42) })).b).toBe('42');   // bigint→字符串
+    expect(JSON.parse(jsonSafeStringify({ when: new Date('2026-06-29T00:00:00Z') })).when)
+      .toBe('2026-06-29T00:00:00.000Z');                                     // Date→ISO
+    expect('opt' in JSON.parse(jsonSafeStringify({ opt: undefined, keep: 1 }))).toBe(false); // undefined 剥
+    expect(jsonSafeStringify(circular)).toContain('[Circular]');             // 循环→标记,不抛
+  });
+
+  test('toJsonSafeValue 净化到合法 JSONValue,永不抛', () => {
+    expect(toJsonSafeValue(null)).toBe(null);
+    expect(toJsonSafeValue({ z: 0, f: false, n: null })).toEqual({ z: 0, f: false, n: null }); // 0/false/null 保留(不被误当空丢)
+    expect(toJsonSafeValue({ big: BigInt(7) })).toEqual({ big: '7' });
+    expect(() => toJsonSafeValue(circular)).not.toThrow();
+    expect((toJsonSafeValue(circular) as any).self).toBe('[Circular]');
   });
 });
