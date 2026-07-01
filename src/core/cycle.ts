@@ -2012,7 +2012,23 @@ export async function runCycle(
     if (phases.includes('propose_takes') ||
         phases.includes('grade_takes') ||
         phases.includes('calibration_profile')) {
+      // Config gate for the calibration suite (propose_takes → grade_takes →
+      // calibration_profile). Default ON (preserves upstream behavior); set
+      //   gbrain config set cycle.calibration.enabled false
+      // to turn the whole suite off. Only an explicit falsy value disables it;
+      // an unset key or a config read error keeps it running (fail-open).
+      let calibrationEnabled = true;
       if (engine) {
+        try {
+          const raw = await engine.getConfig('cycle.calibration.enabled');
+          if (raw != null) {
+            calibrationEnabled = !['false', '0', 'no', 'off'].includes(String(raw).trim().toLowerCase());
+          }
+        } catch {
+          calibrationEnabled = true;
+        }
+      }
+      if (engine && calibrationEnabled) {
         const cfgMod = await import('./config.ts');
         const calibrationConfig = cfgMod.loadConfig() ?? ({} as ReturnType<typeof cfgMod.loadConfig> & object);
         const calibrationSourceId = cycleSourceId;
@@ -2058,15 +2074,25 @@ export async function runCycle(
           await safeYield(opts.yieldBetweenPhases);
         }
       } else {
+        // Either no DB connected, or the suite is disabled by config. Kept
+        // observable per the ALL_PHASES report contract: each requested phase
+        // still emits a 'skipped' result rather than silently vanishing.
+        const reason = !engine ? 'no_database' : 'calibration_disabled';
+        const summary = !engine
+          ? 'no database connected'
+          : 'cycle.calibration.enabled=false (default OFF)';
         for (const p of (['propose_takes', 'grade_takes', 'calibration_profile'] as const)) {
           if (phases.includes(p)) {
             phaseResults.push({
               phase: p,
               status: 'skipped',
               duration_ms: 0,
-              summary: 'no database connected',
-              details: { reason: 'no_database' },
+              summary,
+              details: { reason },
             });
+            // Preserve the "one yield per phase" invariant even when the
+            // suite is gated off (see the yieldBetweenPhases cycle test).
+            await safeYield(opts.yieldBetweenPhases);
           }
         }
       }

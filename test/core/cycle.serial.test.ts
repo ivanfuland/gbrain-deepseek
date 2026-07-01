@@ -217,6 +217,50 @@ describe('runCycle — phase selection', () => {
   });
 });
 
+// ─── Calibration suite config gate (opt-in, default OFF) ───────────
+// The propose_takes → grade_takes → calibration_profile suite is gated on
+// cycle.calibration.enabled (default OFF), consistent with the other heavy
+// optional phases. When disabled the phases must still appear in the report
+// as 'skipped' (ALL_PHASES report contract), not silently vanish.
+
+describe('runCycle — calibration suite config gate', () => {
+  const TRIO = ['propose_takes', 'grade_takes', 'calibration_profile'] as const;
+
+  beforeEach(async () => {
+    await truncateCycleLocks(sharedEngine);
+    await sharedEngine.unsetConfig('cycle.calibration.enabled');
+  });
+  afterEach(async () => {
+    await sharedEngine.unsetConfig('cycle.calibration.enabled');
+  });
+
+  test('default (unset): trio runs — default ON preserves upstream behavior', async () => {
+    // Empty brain → phases run but scan 0 pages → no LLM call, not gated off.
+    const report = await runCycle(sharedEngine, { brainDir: '/tmp/brain', phases: [...TRIO] });
+    for (const name of TRIO) {
+      const ph = report.phases.find(p => p.phase === name);
+      expect(ph?.details?.reason).not.toBe('calibration_disabled');
+    }
+  });
+
+  test('cycle.calibration.enabled=false: whole suite gated off (skipped)', async () => {
+    await sharedEngine.setConfig('cycle.calibration.enabled', 'false');
+    const report = await runCycle(sharedEngine, { brainDir: '/tmp/brain', phases: [...TRIO] });
+    for (const name of TRIO) {
+      const ph = report.phases.find(p => p.phase === name);
+      expect(ph?.status).toBe('skipped');
+      expect(ph?.details.reason).toBe('calibration_disabled');
+    }
+  });
+
+  test('cycle.calibration.enabled=true: trio runs (explicit opt-in)', async () => {
+    await sharedEngine.setConfig('cycle.calibration.enabled', 'true');
+    const report = await runCycle(sharedEngine, { brainDir: '/tmp/brain', phases: ['propose_takes'] });
+    const ph = report.phases.find(p => p.phase === 'propose_takes');
+    expect(ph?.details?.reason).not.toBe('calibration_disabled');
+  });
+});
+
 // ─── Lock-skip for non-DB-write phase selections ──────────────────
 
 describe('runCycle — cycle lock acquire/release semantics', () => {
