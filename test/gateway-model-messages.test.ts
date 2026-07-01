@@ -13,7 +13,7 @@
 import { describe, test, expect } from 'bun:test';
 import { z } from 'zod';
 import { modelMessageSchema } from 'ai';
-import { toModelMessages, type ChatMessage } from '../src/core/ai/gateway.ts';
+import { toModelMessages, toJsonSafeValue, jsonSafeStringify, type ChatMessage } from '../src/core/ai/gateway.ts';
 
 describe('toModelMessages — v6 ModelMessage shape', () => {
   test('string content passes through unchanged', () => {
@@ -193,5 +193,28 @@ describe('toModelMessages — v6 ModelMessage shape', () => {
     expect('x' in val.nested).toBe(false);             // 嵌套 undefined 被剥
     expect(val.nested.arr).toEqual([1, null, 3]);      // 数组里 undefined → null
     expect(val.id).toBe(43);                           // 正常值保留
+  });
+});
+
+// 补丁4: 净化 helper 单测(持久化 choke persistToolExecComplete + toModelMessages 共用)。
+describe('补丁4: jsonSafe helpers', () => {
+  const circular: any = { a: 1 };
+  circular.self = circular;
+
+  test('jsonSafeStringify 永不抛(bigint/循环/Date/undefined)', () => {
+    expect(() => jsonSafeStringify({ b: BigInt('9007199254740993') })).not.toThrow();
+    expect(() => jsonSafeStringify(circular)).not.toThrow();
+    expect(JSON.parse(jsonSafeStringify({ b: BigInt(42) })).b).toBe('42');   // bigint→字符串
+    expect(JSON.parse(jsonSafeStringify({ when: new Date('2026-06-29T00:00:00Z') })).when)
+      .toBe('2026-06-29T00:00:00.000Z');                                     // Date→ISO
+    expect('opt' in JSON.parse(jsonSafeStringify({ opt: undefined, keep: 1 }))).toBe(false); // undefined 剥
+    expect(jsonSafeStringify(circular)).toContain('[Circular]');             // 循环→标记,不抛
+  });
+
+  test('toJsonSafeValue 净化到合法 JSONValue,永不抛', () => {
+    expect(toJsonSafeValue(null)).toBe(null);
+    expect(toJsonSafeValue({ big: BigInt(7) })).toEqual({ big: '7' });
+    expect(() => toJsonSafeValue(circular)).not.toThrow();
+    expect((toJsonSafeValue(circular) as any).self).toBe('[Circular]');
   });
 });

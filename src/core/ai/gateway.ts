@@ -2341,12 +2341,36 @@ export interface ChatToolDef {
 // AI SDK v6 的 ModelMessage JSONValue schema 拒它们(invalid_union at ['output','value'])
 // → 整个 tool turn 死信。净化成合法 JSONValue(undefined 剥、Date→ISO、bigint→字符串、
 // 不可序列化兜底 String)。持久化路径过 PG JSONB 已隐式净化,只 live 路径需要这个。
-function toJsonSafeValue(x: unknown): unknown {
+// bigint / 循环引用 安全的 replacer:默认 JSON.stringify 遇 bigint 或循环会抛。
+function jsonSafeReplacer(): (k: string, v: unknown) => unknown {
+  const seen = new WeakSet<object>();
+  return (_k, v) => {
+    if (typeof v === 'bigint') return v.toString();
+    if (typeof v === 'object' && v !== null) {
+      if (seen.has(v as object)) return '[Circular]';
+      seen.add(v as object);
+    }
+    return v;
+  };
+}
+
+// bigint/循环安全的 stringify,永不抛(用于持久化 choke persistToolExecComplete)。
+export function jsonSafeStringify(x: unknown): string {
+  try {
+    return JSON.stringify(x, jsonSafeReplacer()) ?? 'null';
+  } catch {
+    try { return JSON.stringify(String(x)); } catch { return 'null'; }
+  }
+}
+
+// 把任意值净化成合法 JSONValue(Date→ISO / undefined 剥 / bigint→字符串 / 循环→"[Circular]"),
+// 永不抛。用于 toModelMessages 的 tool-result output(v6 JSONValue schema 严格拒非-JSON)。
+export function toJsonSafeValue(x: unknown): unknown {
   if (x == null) return null;
   try {
-    return JSON.parse(JSON.stringify(x, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)));
+    return JSON.parse(jsonSafeStringify(x));
   } catch {
-    return String(x);
+    return null;
   }
 }
 
@@ -2365,7 +2389,7 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
             toolCallId: b.toolCallId,
             toolName: b.toolName,
             output: b.isError
-              ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : JSON.stringify(toJsonSafeValue(b.output)) }
+              ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : jsonSafeStringify(b.output) }
               : (typeof b.output === 'string'
                 ? { type: 'text' as const, value: b.output }
                 : { type: 'json' as const, value: toJsonSafeValue(b.output) as never }),
