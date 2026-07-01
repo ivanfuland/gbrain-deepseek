@@ -213,6 +213,7 @@ describe('补丁4: jsonSafe helpers', () => {
 
   test('toJsonSafeValue 净化到合法 JSONValue,永不抛', () => {
     expect(toJsonSafeValue(null)).toBe(null);
+    expect(toJsonSafeValue({ z: 0, f: false, n: null })).toEqual({ z: 0, f: false, n: null }); // 0/false/null 保留(不被误当空丢)
     expect(toJsonSafeValue({ big: BigInt(7) })).toEqual({ big: '7' });
     expect(() => toJsonSafeValue(circular)).not.toThrow();
     expect((toJsonSafeValue(circular) as any).self).toBe('[Circular]');

@@ -2340,7 +2340,7 @@ export interface ChatToolDef {
 // (如 brain_get_page 返回的 page 对象),含非-JSON 值(undefined 字段 / Date / bigint)。
 // AI SDK v6 的 ModelMessage JSONValue schema 拒它们(invalid_union at ['output','value'])
 // → 整个 tool turn 死信。净化成合法 JSONValue(undefined 剥、Date→ISO、bigint→字符串、
-// 不可序列化兜底 String)。持久化路径过 PG JSONB 已隐式净化,只 live 路径需要这个。
+// 不可序列化兜底)。补丁4 在两个序列化边界净化:持久化 choke(persistToolExecComplete)+ 本转换。
 // bigint / 循环引用 安全的 replacer:默认 JSON.stringify 遇 bigint 或循环会抛。
 function jsonSafeReplacer(): (k: string, v: unknown) => unknown {
   const seen = new WeakSet<object>();
