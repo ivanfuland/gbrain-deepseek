@@ -160,6 +160,28 @@ describe('E2E patterns — no API key', () => {
   }, 30_000);
 });
 
+describe('E2E patterns — non-Anthropic model, gateway loop off', () => {
+  test('skipped gateway_loop_disabled (avoids silent ok/0 when handler would reject)', async () => {
+    const rig = await setupRig();
+    try {
+      // Non-Anthropic model selected but agent.use_gateway_loop left unset (off).
+      // The shared subagent handler rejects non-Anthropic models when the gateway
+      // loop is disabled; the preflight must skip explicitly here rather than
+      // submit a job that dies while the phase reports ok/0.
+      await rig.engine.setConfig('models.dream.patterns', 'litellm:deepseek-v4-pro');
+      await seedReflections(rig.engine, 5); // above default min_evidence (3)
+      const result = await runPhasePatterns(rig.engine, {
+        brainDir: rig.brainDir,
+        dryRun: false,
+      });
+      expect(result.status).toBe('skipped');
+      expect((result.details as { reason?: string }).reason).toBe('gateway_loop_disabled');
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+});
+
 describe('E2E patterns — dry-run', () => {
   test('dry-run returns ok with reflections_considered and zero patterns_written', async () => {
     const rig = await setupRig();

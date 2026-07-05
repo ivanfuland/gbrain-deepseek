@@ -27,6 +27,8 @@ import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
+import { isAnthropicProvider } from '../model-config.ts';
+import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 
 export interface PatternsPhaseOpts {
   brainDir: string;
@@ -63,9 +65,25 @@ export async function runPhasePatterns(
       });
     }
 
-    // Submit one subagent for pattern detection.
-    if (!process.env.ANTHROPIC_API_KEY) {
-      return skipped('no_api_key', 'ANTHROPIC_API_KEY unset; pattern detection skipped');
+    // Submit one subagent for pattern detection. Provider-aware preflight —
+    // fail-fast with a diagnosable skip rather than submitting a job that dies
+    // while this phase would still report ok/0 (silent zero-output):
+    //   - Anthropic-provider model     → needs an Anthropic key (env/config),
+    //     mirroring makeJudgeClient's key probe in cycle/synthesize.ts.
+    //   - non-Anthropic (gateway) model → needs agent.use_gateway_loop=true,
+    //     else the shared subagent handler (minions/handlers/subagent.ts)
+    //     rejects it and the child job fails while outcome would report ok.
+    if (isAnthropicProvider(config.model)) {
+      if (!hasAnthropicKey()) {
+        return skipped('no_api_key', `Anthropic model "${config.model}" selected but no Anthropic key (ANTHROPIC_API_KEY / gbrain config); pattern detection skipped`);
+      }
+    } else {
+      const useGatewayLoopRaw = await engine.getConfig('agent.use_gateway_loop').catch(() => null);
+      const useGatewayLoop = typeof useGatewayLoopRaw === 'string' &&
+        (useGatewayLoopRaw === 'true' || useGatewayLoopRaw === '1');
+      if (!useGatewayLoop) {
+        return skipped('gateway_loop_disabled', `Non-Anthropic model "${config.model}" requires agent.use_gateway_loop=true (the subagent handler rejects gateway models otherwise); pattern detection skipped`);
+      }
     }
 
     const allowedSlugPrefixes = await loadAllowedSlugPrefixes();
