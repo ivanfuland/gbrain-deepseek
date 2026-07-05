@@ -39,12 +39,15 @@ describe('patterns phase wiring', () => {
     expect(patternsSrc).toContain("tool_name = 'brain_put_page'");
   });
 
-  test('skips only when an Anthropic-provider model is selected but no key present', () => {
-    // Provider-aware gate: non-Anthropic (gateway/litellm) models route through
-    // the subagent handler instead of skipping. Mirrors makeJudgeClient probe.
+  test('provider-aware preflight: anthropic-no-key and gateway-off both skip explicitly', () => {
+    // Anthropic model + no key → skip(no_api_key); non-Anthropic model +
+    // use_gateway_loop off → skip(gateway_loop_disabled). Both fail-fast with a
+    // diagnosable reason instead of submitting a job that dies (silent ok/0).
     expect(patternsSrc).toContain('isAnthropicProvider(config.model)');
     expect(patternsSrc).toContain('hasAnthropicKey()');
     expect(patternsSrc).toContain('no_api_key');
+    expect(patternsSrc).toContain('agent.use_gateway_loop');
+    expect(patternsSrc).toContain('gateway_loop_disabled');
   });
 
   test('skips when reflections below min_evidence', () => {
