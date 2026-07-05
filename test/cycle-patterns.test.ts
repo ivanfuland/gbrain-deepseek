@@ -39,8 +39,11 @@ describe('patterns phase wiring', () => {
     expect(patternsSrc).toContain("tool_name = 'brain_put_page'");
   });
 
-  test('skips when ANTHROPIC_API_KEY missing', () => {
-    expect(patternsSrc).toContain('ANTHROPIC_API_KEY');
+  test('skips only when an Anthropic-provider model is selected but no key present', () => {
+    // Provider-aware gate: non-Anthropic (gateway/litellm) models route through
+    // the subagent handler instead of skipping. Mirrors makeJudgeClient probe.
+    expect(patternsSrc).toContain('isAnthropicProvider(config.model)');
+    expect(patternsSrc).toContain('hasAnthropicKey()');
     expect(patternsSrc).toContain('no_api_key');
   });
 

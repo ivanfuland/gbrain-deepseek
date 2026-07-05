@@ -27,6 +27,8 @@ import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
+import { isAnthropicProvider } from '../model-config.ts';
+import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 
 export interface PatternsPhaseOpts {
   brainDir: string;
@@ -63,9 +65,14 @@ export async function runPhasePatterns(
       });
     }
 
-    // Submit one subagent for pattern detection.
-    if (!process.env.ANTHROPIC_API_KEY) {
-      return skipped('no_api_key', 'ANTHROPIC_API_KEY unset; pattern detection skipped');
+    // Submit one subagent for pattern detection. Provider-aware gate: only
+    // Anthropic-provider models require ANTHROPIC_API_KEY. Gateway providers
+    // (e.g. litellm:*) route through the shared subagent handler — which the
+    // main synthesize phase already exercises daily via agent.use_gateway_loop.
+    // Mirrors makeJudgeClient's probe in cycle/synthesize.ts
+    // (providerId === 'anthropic' && !hasAnthropicKey()).
+    if (isAnthropicProvider(config.model) && !hasAnthropicKey()) {
+      return skipped('no_api_key', `Anthropic model "${config.model}" selected but no Anthropic key (ANTHROPIC_API_KEY / gbrain config); pattern detection skipped`);
     }
 
     const allowedSlugPrefixes = await loadAllowedSlugPrefixes();
