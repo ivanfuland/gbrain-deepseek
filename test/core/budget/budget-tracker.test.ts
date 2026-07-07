@@ -135,7 +135,7 @@ describe('BudgetTracker.reserve', () => {
     expect(caught).toBeInstanceOf(BudgetExhausted);
     expect((caught as BudgetExhausted).reason).toBe('no_pricing');
     expect((caught as BudgetExhausted).modelId).toBe('mystery:some-unreleased-model');
-    expect((caught as Error).message).toMatch(/anthropic-pricing\.ts/);
+    expect((caught as Error).message).toMatch(/model-pricing\.ts/);
   });
 
   test('v0.41.20.0: slash-prefix anthropic/claude-* under --max-cost does NOT no_pricing throw (THE FIX)', () => {
@@ -486,5 +486,19 @@ describe('BudgetTracker.snapshot', () => {
     expect(s.maxRuntimeMs).toBe(60_000);
     expect(s.elapsedMs).toBeGreaterThanOrEqual(0);
     expect(s.callsRecorded).toBe(0);
+  });
+});
+
+describe('BudgetTracker — DeepSeek chat 计价', () => {
+  test('配 --max-cost 跑 deepseek chat 不再 no_pricing 崩', () => {
+    const t = new BudgetTracker({ maxCostUsd: 10, label: 'test-ds', auditPath: '/tmp/cc-budget-ds-test.jsonl' });
+    expect(() =>
+      t.reserve({ modelId: 'litellm:deepseek-v4-pro', estimatedInputTokens: 1000, maxOutputTokens: 1000, kind: 'chat' }),
+    ).not.toThrow();
+  });
+  test('deepseek chat 实际用量被计入累计成本(非 $0)', () => {
+    const t = new BudgetTracker({ maxCostUsd: 10, label: 'test-ds2', auditPath: '/tmp/cc-budget-ds-test2.jsonl' });
+    t.record({ modelId: 'litellm:deepseek-v4-pro', inputTokens: 1_000_000, outputTokens: 1_000_000, kind: 'chat' });
+    expect(t.totalSpent).toBeCloseTo(1.305, 3);
   });
 });

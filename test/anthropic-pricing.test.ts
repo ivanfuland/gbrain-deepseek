@@ -73,3 +73,16 @@ describe('estimateMaxCostUsd', () => {
     }
   });
 });
+
+describe('estimateMaxCostUsd — DeepSeek(经 chatPriceLookup)', () => {
+  test('litellm:deepseek-v4-pro 有价(改前返回 null)', () => {
+    // 1M in + 1M out → 0.435 + 0.87 = 1.305
+    expect(estimateMaxCostUsd('litellm:deepseek-v4-pro', 1_000_000, 1_000_000)).toBeCloseTo(1.305, 3);
+  });
+  test('litellm:claude-sonnet-4-6 无回归 → 3 + 15 = 18', () => {
+    expect(estimateMaxCostUsd('litellm:claude-sonnet-4-6', 1_000_000, 1_000_000)).toBeCloseTo(18.0, 2);
+  });
+  test('未背书代理 litellm:gpt-5 仍 null', () => {
+    expect(estimateMaxCostUsd('litellm:gpt-5', 1_000_000, 1_000_000)).toBeNull();
+  });
+});
