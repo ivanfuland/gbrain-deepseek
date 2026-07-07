@@ -16,8 +16,7 @@
  * process. The cycle still runs unbounded for those models.
  */
 
-import { CANONICAL_PRICING, type ModelPricing } from './model-pricing.ts';
-import { splitProviderModelId } from './model-id.ts';
+import { CANONICAL_PRICING, chatPriceLookup, type ModelPricing } from './model-pricing.ts';
 
 export type { ModelPricing };
 
@@ -42,23 +41,21 @@ export const ANTHROPIC_PRICING: Record<string, ModelPricing> = Object.fromEntrie
  * Returns null when the model isn't in the pricing map. Callers warn-once
  * and treat as zero-cost (the cycle runs unbounded for that submit).
  *
- * Accepts bare (`claude-opus-4-7`), colon-prefixed (`anthropic:claude-opus-4-7`),
- * and slash-prefixed (`anthropic/claude-opus-4-7`) ids. Routes through
- * `splitProviderModelId` so the slash-form (which arrives via CLI `--judge-model`
- * and OpenRouter recipe lists) hits the pricing table. Pre-v0.41.21.0 the inline
- * `:`-only split missed slash form → BudgetTracker no_pricing hard-fail with
- * `--max-cost N` (closes #1540).
+ * Pricing is resolved via `chatPriceLookup` (model-pricing.ts) — the shared
+ * chat-pricing entry point that accepts bare (`claude-opus-4-7`),
+ * colon-prefixed (`anthropic:claude-opus-4-7` / `litellm:deepseek-v4-pro`),
+ * and slash-prefixed (`anthropic/claude-opus-4-7`) ids, plus the litellm
+ * proxy ids the dream-cycle budget gate actually receives at runtime. The
+ * `undefined`-on-miss it returns is mapped to this function's null-on-miss
+ * contract. Pre-v0.41.21.0 an inline `:`-only split missed slash form →
+ * BudgetTracker no_pricing hard-fail with `--max-cost N` (closes #1540).
  */
 export function estimateMaxCostUsd(
   modelId: string,
   estimatedInputTokens: number,
   maxOutputTokens: number,
 ): number | null {
-  let p: ModelPricing | undefined = ANTHROPIC_PRICING[modelId];
-  if (!p) {
-    const { model: tail } = splitProviderModelId(modelId);
-    if (tail) p = ANTHROPIC_PRICING[tail];
-  }
+  const p: ModelPricing | undefined = chatPriceLookup(modelId);
   if (!p) return null;
   return (
     (estimatedInputTokens / 1_000_000) * p.input +

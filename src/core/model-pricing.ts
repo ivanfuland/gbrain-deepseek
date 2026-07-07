@@ -88,6 +88,16 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // ── Together / DeepSeek (cross-modal-eval panel) ───────────────────────
   'together:meta-llama/Llama-3.3-70B-Instruct-Turbo': { input: 0.88, output: 0.88 },
   'deepseek:deepseek-chat':               { input:  0.14, output:  0.28 },
+
+  // ── DeepSeek V4(经 aigallerie/LiteLLM 直连透传 = DeepSeek 官网价)──────────
+  // 键按运行期确切 id:budget 路径收到的是 gateway.chat() 回填的
+  // `${recipe.id}:${modelId}` = litellm:deepseek-v4-*(见 gateway.ts / U1 核实)。
+  // 标准/非高峰 USD;峰时 2×、cache-hit 更低 —— 真值看网关 /key/info(2026-07 核对官网)。
+  'litellm:deepseek-v4-pro':    { input: 0.435, output: 0.87 },
+  'litellm:deepseek-v4-flash':  { input: 0.14,  output: 0.28 },
+  // 原厂前缀形式(稳健,便于将来直连/原厂前缀调用命中):
+  'deepseek:deepseek-v4-pro':   { input: 0.435, output: 0.87 },
+  'deepseek:deepseek-v4-flash': { input: 0.14,  output: 0.28 },
 };
 
 /**
@@ -118,4 +128,22 @@ export function canonicalLookup(
   if (!model) return undefined;
   const key = provider ? `${provider}:${model}` : `anthropic:${model}`;
   return CANONICAL_PRICING[key];
+}
+
+/**
+ * 通用 chat 计价解析器 —— 预算门唯一入口。
+ * 层1:canonicalLookup(原厂前缀条目 + 显式 litellm:deepseek-* 键 + 裸 anthropic 默认)。
+ * 层2:anthropic 裸名 fallback —— 用 CANONICAL_PRICING['anthropic:'+tail] 直接复刻,
+ *      覆盖 litellm:claude-*。**故意不 import ANTHROPIC_PRICING**(避免 no-heavy-import
+ *      测试破 + model-pricing↔anthropic-pricing 循环);与 ANTHROPIC_PRICING[tail] 等价
+ *      (后者本就是 canonical anthropic: 条目剥前缀)。
+ * 不做跨 provider 裸名猜价:未背书代理模型(litellm:gpt-5 等)返回 undefined。
+ */
+export function chatPriceLookup(modelId: string | null | undefined): ModelPricing | undefined {
+  if (!modelId) return undefined;
+  const direct = canonicalLookup(modelId);
+  if (direct) return direct;
+  const { model: tail } = splitProviderModelId(modelId);
+  if (tail) return CANONICAL_PRICING[`anthropic:${tail}`];
+  return undefined;
 }

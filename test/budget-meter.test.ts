@@ -109,3 +109,13 @@ describe('BudgetMeter', () => {
     expect(typeof unpriced.max_output_tokens).toBe('number');
   });
 });
+
+describe('BudgetMeter — DeepSeek 门回归(spec G2)', () => {
+  test('deepseek submit 被计价、不再 submit_unpriced', () => {
+    const m = new BudgetMeter({ budgetUsd: 100, phase: 'test', auditPath: '/tmp/cc-meter-ds.jsonl' });
+    const r = m.check({ modelId: 'litellm:deepseek-v4-pro', estimatedInputTokens: 1_000_000, maxOutputTokens: 1_000_000 });
+    expect(r.unpriced).toBeFalsy();          // 改前:true(→ submit_unpriced)
+    expect(r.allowed).toBe(true);            // 1.305 < 100
+    expect(r.estimatedCostUsd).toBeCloseTo(1.305, 3);  // 改前:0
+  });
+});

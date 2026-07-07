@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import {
   CANONICAL_PRICING,
   canonicalLookup,
+  chatPriceLookup,
 } from '../src/core/model-pricing.ts';
 import { ANTHROPIC_PRICING } from '../src/core/anthropic-pricing.ts';
 import { MODEL_PRICING } from '../src/core/takes-quality-eval/pricing.ts';
@@ -149,5 +150,32 @@ describe('no heavy import (cycle guard)', () => {
       (m) => m[1],
     );
     expect(relImports).toEqual(['./model-id.ts']);
+  });
+});
+
+describe('chatPriceLookup — DeepSeek 计价 + 泛化解析', () => {
+  test('litellm:deepseek-v4-pro → 标准价 (层1 精确命中)', () => {
+    expect(chatPriceLookup('litellm:deepseek-v4-pro')).toEqual({ input: 0.435, output: 0.87 });
+  });
+  test('litellm:deepseek-v4-flash → 标准价', () => {
+    expect(chatPriceLookup('litellm:deepseek-v4-flash')).toEqual({ input: 0.14, output: 0.28 });
+  });
+  test('litellm:claude-sonnet-4-6 仍解析 (层2 anthropic 裸名 fallback,无回归)', () => {
+    expect(chatPriceLookup('litellm:claude-sonnet-4-6')).toEqual({ input: 3.0, output: 15.0 });
+  });
+  test('未背书代理模型 litellm:gpt-5 → honest unknown (不猜 native 价)', () => {
+    expect(chatPriceLookup('litellm:gpt-5')).toBeUndefined();
+  });
+  test('空/无效输入 → undefined', () => {
+    expect(chatPriceLookup(undefined)).toBeUndefined();
+    expect(chatPriceLookup('')).toBeUndefined();
+  });
+  test('畸形前导冒号 id 落 anthropic 价(既有 canonicalLookup 行为;gateway 上游会拒,故预算层多算无害)', () => {
+    // splitProviderModelId(':claude-..') 保留空 provider,canonicalLookup 落 anthropic:${model};
+    // gateway parseModelId 拒空 provider id(model-resolver.ts:49 `if (!providerId || !modelId)`),此 id 永不到真实调用。
+    expect(chatPriceLookup(':claude-sonnet-4-6')).toEqual({ input: 3.0, output: 15.0 });
+  });
+  test('原厂前缀 deepseek:deepseek-v4-pro 直接命中(层1)', () => {
+    expect(chatPriceLookup('deepseek:deepseek-v4-pro')).toEqual({ input: 0.435, output: 0.87 });
   });
 });

@@ -34,6 +34,7 @@ import { gbrainPath } from '../config.ts';
 import { ANTHROPIC_PRICING, type ModelPricing } from '../anthropic-pricing.ts';
 import { EMBEDDING_PRICING, lookupEmbeddingPrice } from '../embedding-pricing.ts';
 import { splitProviderModelId } from '../model-id.ts';
+import { chatPriceLookup } from '../model-pricing.ts';
 import { isoWeekFilename, resolveAuditDir } from '../audit-week-file.ts';
 
 export type BudgetKind = 'chat' | 'embed' | 'rerank';
@@ -156,12 +157,13 @@ const FREE_LOCAL_EMBED_PROVIDERS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Look up `modelId` in the chat or embedding pricing maps. Returns a
+ * Look up `modelId` in the chat, embed, or rerank pricing maps. Returns a
  * per-1M-token price tuple, or null when unknown.
  *
  * Strategy:
- *   - Chat: try the bare model id in ANTHROPIC_PRICING first (legacy keys
- *     are bare claude-* ids). Fall back to the provider-prefixed key.
+ *   - Chat: delegate to `chatPriceLookup` (canonical resolver — DeepSeek,
+ *     Anthropic, OpenAI, Google, plus the bare-anthropic fallback all live
+ *     there; see model-pricing.ts). `undefined` on miss maps to `null`.
  *   - Embed: lookupEmbeddingPrice handles the provider:model form; on a miss,
  *     local-inference providers (FREE_LOCAL_EMBED_PROVIDERS) price at $0 so
  *     `--max-cost` callers don't hard-fail.
@@ -182,7 +184,14 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
     }
     return null;
   }
-  // chat or rerank: try bare key first, then provider:model or provider/model.
+  // chat: route through the canonical resolver (DeepSeek + anthropic bare
+  // fallback). Pre-fix this shared with rerank's bare-ANTHROPIC_PRICING
+  // lookup, which never had DeepSeek entries — `litellm:deepseek-v4-pro`
+  // silently no_pricing-failed `--max-cost` (closes the DeepSeek pricing gap).
+  if (kind === 'chat') {
+    return chatPriceLookup(modelId) ?? null;
+  }
+  // rerank: try bare key first, then provider:model or provider/model.
   // v0.41.21.0: route through splitProviderModelId so slash-prefixed ids
   // (the form `--judge-model` and OpenRouter recipes emit) hit the pricing
   // table. Pre-fix, slash-form silently no_pricing-failed `--max-cost` on
@@ -274,8 +283,12 @@ export class BudgetTracker {
         // TX2: hard-fail when a cap is set but pricing is missing — without
         // pricing we can't enforce the cap, and silently ignoring it would
         // void the contract.
+        const fileHint =
+          estimate.kind === 'embed' ? 'embedding-pricing.ts'
+          : estimate.kind === 'chat' ? 'model-pricing.ts'
+          : 'anthropic-pricing.ts'; // rerank still resolves via ANTHROPIC_PRICING
         const msg = `${this.opts.label}: no pricing entry for model "${estimate.modelId}" (kind=${estimate.kind}). ` +
-          `Add it to src/core/${estimate.kind === 'embed' ? 'embedding-pricing.ts' : 'anthropic-pricing.ts'} or drop --max-cost.`;
+          `Add it to src/core/${fileHint} or drop --max-cost.`;
         this.fireExhausted();
         throw new BudgetExhausted(msg, {
           reason: 'no_pricing',
