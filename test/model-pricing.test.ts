@@ -162,4 +162,12 @@ describe('chatPriceLookup — DeepSeek 计价 + 泛化解析', () => {
     expect(chatPriceLookup(undefined)).toBeUndefined();
     expect(chatPriceLookup('')).toBeUndefined();
   });
+  test('畸形前导冒号 id 落 anthropic 价(既有 canonicalLookup 行为;gateway 上游会拒,故预算层多算无害)', () => {
+    // splitProviderModelId(':claude-..') 保留空 provider,canonicalLookup 落 anthropic:${model};
+    // gateway parseModelId 拒空 provider id(model-resolver.ts:47),此 id 永不到真实调用。
+    expect(chatPriceLookup(':claude-sonnet-4-6')).toEqual({ input: 3.0, output: 15.0 });
+  });
+  test('原厂前缀 deepseek:deepseek-v4-pro 直接命中(层1)', () => {
+    expect(chatPriceLookup('deepseek:deepseek-v4-pro')).toEqual({ input: 0.435, output: 0.87 });
+  });
 });
